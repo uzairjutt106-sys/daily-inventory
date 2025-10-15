@@ -1,0 +1,174 @@
+import sqlite3
+from datetime import date
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Header, Depends, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+# --- Security Configuration ---
+# NOTE: In a production environment, this key should be read from an environment variable!
+API_KEY = "my-secret-inventory-key"
+
+
+async def get_api_key(x_api_key: str = Header(None)):
+    if x_api_key is None:
+        raise HTTPException(
+            status_code=400,
+            detail="X-API-Key header required"
+        )
+    if x_api_key != API_KEY:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API Key"
+        )
+    return x_api_key
+
+
+# --- Database Configuration ---
+DATABASE_FILE = "daily_inventory.db"
+
+
+def init_db():
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        # Added quantity_kg to the table definition
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_name TEXT NOT NULL,
+                purchase_rate REAL NOT NULL,
+                sale_rate REAL NOT NULL,
+                quantity_kg REAL NOT NULL,
+                transaction_date TEXT NOT NULL
+            );
+        """)
+        conn.commit()
+        print(f"✅ Database initialized and table 'transactions' ready in {DATABASE_FILE}")
+    except sqlite3.Error as e:
+        print(f"❌ Error during database initialization: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+init_db()
+
+
+# --- Pydantic Model ---
+class Transaction(BaseModel):
+    item_name: str = Field(..., example="Coffee Beans")
+    purchase_rate: float = Field(..., gt=0, example=8.50, description="Cost price per kg.")
+    sale_rate: float = Field(..., gt=0, example=12.00, description="Selling price per kg.")
+    quantity_kg: float = Field(..., gt=0, example=50.0, description="Quantity of the item in kilograms.")
+
+
+# --- App Initialization ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+
+
+app = FastAPI(
+    title="Daily Inventory API",
+    description="API + Web UI for recording daily purchase and sale transactions using SQLite.",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# --- Templates and Static Files ---
+templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+# --- API Endpoints ---
+@app.post("/transactions", status_code=201)
+async def record_transaction(
+    transaction: Transaction,
+    api_key: str = Depends(get_api_key)  # Apply the security dependency
+):
+    conn = None
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        today_date = date.today().isoformat()
+
+        data = (
+            transaction.item_name,
+            transaction.purchase_rate,
+            transaction.sale_rate,
+            transaction.quantity_kg,
+            today_date
+        )
+
+        cursor.execute(
+            """
+            INSERT INTO transactions (item_name, purchase_rate, sale_rate, quantity_kg, transaction_date)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            data
+        )
+        conn.commit()
+
+        unit_profit = transaction.sale_rate - transaction.purchase_rate
+        total_profit = unit_profit * transaction.quantity_kg
+
+        return {
+            "message": "Transaction recorded successfully",
+            "item_name": transaction.item_name,
+            "quantity_kg": transaction.quantity_kg,
+            "date": today_date,
+            "total_profit": round(total_profit, 2)
+        }
+
+    except sqlite3.Error as e:
+        print(f"Database error during insertion: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Database error: Could not record transaction."
+        )
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/transactions")
+async def get_all_transactions():
+    conn = None
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM transactions ORDER BY transaction_date DESC, id DESC")
+        transactions = [dict(row) for row in cursor.fetchall()]
+        return {"total_records": len(transactions), "transactions": transactions}
+    except sqlite3.Error as e:
+        print(f"Database error during retrieval: {e}")
+        raise HTTPException(status_code=500, detail="Database error: Could not retrieve transactions.")
+    finally:
+        if conn:
+            conn.close()
+
+
+# --- HTML Routes ---
+@app.get("/", response_class=HTMLResponse)
+async def show_home(request: Request):
+    """Show all transactions in HTML table."""
+    conn = sqlite3.connect(DATABASE_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM transactions ORDER BY transaction_date DESC, id DESC")
+    transactions = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "transactions": transactions}
+    )
+
+
+@app.get("/add", response_class=HTMLResponse)
+async def add_transaction_page(request: Request):
+    """Show the Add Transaction form page."""
+    return templates.TemplateResponse("add_transaction.html", {"request": request})

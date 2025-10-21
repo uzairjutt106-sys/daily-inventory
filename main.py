@@ -51,10 +51,10 @@ init_db()
 
 # ---------- Models ----------
 class Transaction(BaseModel):
-    item_name: str = Field(..., example="Coffee Beans")
-    purchase_rate: float = Field(..., gt=0, example=8.50, description="Cost price per kg.")
-    sale_rate: float = Field(..., gt=0, example=12.00, description="Selling price per kg.")
-    quantity_kg: float = Field(..., gt=0, example=50.0, description="Quantity of the item in kilograms.")
+    item_name: str = Field(..., example="copper")
+    purchase_rate: float = Field(..., gt=0, example=2200, description="Cost price per kg.")
+    sale_rate: float = Field(..., gt=0, example=25000, description="Selling price per kg.")
+    quantity_kg: float = Field(..., gt=0, example=5.0, description="Quantity of the item in kilograms.")
     # new: allow back-dating (optional)
     transaction_date: Optional[date] = Field(None, description="If omitted, defaults to today's date")
 
@@ -291,4 +291,3 @@ async def delete_transaction(
     finally:
         if conn:
             conn.close()
-# --- End of code ---

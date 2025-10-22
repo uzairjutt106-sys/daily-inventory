@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Header, Depends, Query, Path as FPath
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 # --- Security Configuration ---
@@ -30,13 +31,12 @@ def init_db():
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 item_name TEXT NOT NULL,
-                purchase_rate REAL NOT NULL,
-                sale_rate REAL NOT NULL,
+                purchase_rate REAL,
+                sale_rate REAL,
                 quantity_kg REAL NOT NULL,
                 transaction_date TEXT NOT NULL
             );
         """)
-        # helpful indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions(transaction_date);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_item ON transactions(item_name);")
         conn.commit()
@@ -52,10 +52,9 @@ init_db()
 # ---------- Models ----------
 class Transaction(BaseModel):
     item_name: str = Field(..., example="copper")
-    purchase_rate: float = Field(..., gt=0, example=2200, description="Cost price per kg.")
-    sale_rate: float = Field(..., gt=0, example=25000, description="Selling price per kg.")
+    purchase_rate: Optional[float] = Field(None, ge=0, example=2200, description="Cost price per kg. Can be null.")
+    sale_rate: Optional[float] = Field(None, ge=0, example=25000, description="Selling price per kg. Can be null.")
     quantity_kg: float = Field(..., gt=0, example=5.0, description="Quantity of the item in kilograms.")
-    # new: allow back-dating (optional)
     transaction_date: Optional[date] = Field(None, description="If omitted, defaults to today's date")
 
 class DeleteResponse(BaseModel):
@@ -73,16 +72,34 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# --------- UI serving (same-origin) ----------
+# ✅ --- Enable CORS for Next.js frontend ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://192.168.0.108:4001",
+        "http://192.168.0.108:3000",
+        "http://192.168.0.108:4000",
+        "http://localhost:4000",
+        "http://127.0.0.1:4000",
+        "http://192.168.0.113:4000",
+        "http://localhost:4001",
+        "http://127.0.0.1:4001",
+        "http://192.168.0.113:4001",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://192.168.0.113:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --------- UI serving ----------
 base_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=base_dir), name="static")
 
 @app.get("/", include_in_schema=False)
 async def serve_ui():
-    """
-    Serve inventory.html from the same folder as this file.
-    Falls back to a small message if the file isn't present.
-    """
     html_path = base_dir / "inventory.html"
     if html_path.exists():
         return FileResponse(html_path)
@@ -91,20 +108,17 @@ async def serve_ui():
         <h1>inventory.html not found</h1>
         <p>Expected at: <code>{html_path}</code></p>
         <p>Put your <strong>inventory.html</strong> next to this Python file or open
-           <a href="/static/inventory.html">/static/inventory.html</a> if you placed it there.</p>""",
+           <a href="/static/inventory.html">/static/inventory.html</a>.</p>""",
         status_code=200
     )
 
-# favicon to avoid 404s
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     ico = base_dir / "favicon.ico"
     if ico.exists():
         return FileResponse(ico)
-    # tiny 1x1 fallback
     return HTMLResponse("", status_code=204)
 
-# Simple health endpoint (no auth)
 @app.get("/health", include_in_schema=False)
 async def health():
     return {"ok": True}
@@ -112,15 +126,13 @@ async def health():
 # --------- API Endpoints ----------
 
 @app.post("/transactions", status_code=201)
-async def record_transaction(
-    transaction: Transaction,
-    api_key: str = Depends(get_api_key)
-):
+async def record_transaction(transaction: Transaction, api_key: str = Depends(get_api_key)):
     conn = None
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
         tx_date = (transaction.transaction_date or date.today()).isoformat()
+
         data = (
             transaction.item_name,
             transaction.purchase_rate,
@@ -128,22 +140,26 @@ async def record_transaction(
             transaction.quantity_kg,
             tx_date
         )
-        cursor.execute(
-            """
+
+        cursor.execute("""
             INSERT INTO transactions (item_name, purchase_rate, sale_rate, quantity_kg, transaction_date)
             VALUES (?, ?, ?, ?, ?)
-            """,
-            data
-        )
+        """, data)
         conn.commit()
-        unit_profit = transaction.sale_rate - transaction.purchase_rate
-        total_profit = unit_profit * transaction.quantity_kg
+
+        # ✅ Calculate profit only if both rates exist
+        if transaction.sale_rate is not None and transaction.purchase_rate is not None:
+            unit_profit = transaction.sale_rate - transaction.purchase_rate
+            total_profit = unit_profit * transaction.quantity_kg
+        else:
+            total_profit = None
+
         return {
             "message": "Transaction recorded successfully",
             "item_name": transaction.item_name,
             "quantity_kg": transaction.quantity_kg,
             "date": tx_date,
-            "total_profit": round(total_profit, 2)
+            "total_profit": round(total_profit, 2) if total_profit is not None else None
         }
     except sqlite3.Error as e:
         print(f"Database error during insertion: {e}")
@@ -154,9 +170,9 @@ async def record_transaction(
 
 @app.get("/transactions")
 async def get_all_transactions(
-    item_name: Optional[str] = Query(None, description="Filter by exact item name"),
-    date_from: Optional[date] = Query(None, description="Inclusive, e.g. 2025-10-01"),
-    date_to: Optional[date] = Query(None, description="Inclusive, e.g. 2025-10-31"),
+    item_name: Optional[str] = Query(None),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0)
 ):
@@ -165,9 +181,7 @@ async def get_all_transactions(
         conn = sqlite3.connect(DATABASE_FILE)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-
-        where = []
-        params = []
+        where, params = [], []
         if item_name:
             where.append("item_name = ?")
             params.append(item_name)
@@ -177,23 +191,16 @@ async def get_all_transactions(
         if date_to:
             where.append("transaction_date <= ?")
             params.append(date_to.isoformat())
-
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-        # total
         cursor.execute(f"SELECT COUNT(*) AS c FROM transactions {where_sql}", params)
         total = cursor.fetchone()["c"]
-
-        # page
-        cursor.execute(
-            f"""
+        cursor.execute(f"""
             SELECT id, item_name, purchase_rate, sale_rate, quantity_kg, transaction_date
             FROM transactions
             {where_sql}
             ORDER BY transaction_date DESC, id DESC
             LIMIT ? OFFSET ?
-            """,
-            params + [limit, offset]
-        )
+        """, params + [limit, offset])
         rows = [dict(row) for row in cursor.fetchall()]
         return {"total_records": total, "transactions": rows}
     except sqlite3.Error as e:
@@ -204,23 +211,13 @@ async def get_all_transactions(
             conn.close()
 
 @app.get("/summary/daily")
-async def daily_summary(
-    item_name: Optional[str] = Query(None),
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None)
-):
-    """
-    Returns rows like:
-    { transaction_date, total_qty_kg, total_profit }
-    """
+async def daily_summary(item_name: Optional[str] = Query(None), date_from: Optional[date] = Query(None), date_to: Optional[date] = Query(None)):
     conn = None
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-
-        where = []
-        params = []
+        where, params = [], []
         if item_name:
             where.append("item_name = ?")
             params.append(item_name)
@@ -230,10 +227,8 @@ async def daily_summary(
         if date_to:
             where.append("transaction_date <= ?")
             params.append(date_to.isoformat())
-
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-        cursor.execute(
-            f"""
+        cursor.execute(f"""
             SELECT
               transaction_date,
               ROUND(SUM(quantity_kg), 3) AS total_qty_kg,
@@ -242,9 +237,7 @@ async def daily_summary(
             {where_sql}
             GROUP BY transaction_date
             ORDER BY transaction_date DESC
-            """
-            , params
-        )
+        """, params)
         rows = [dict(row) for row in cursor.fetchall()]
         return {"rows": rows}
     except sqlite3.Error as e:
@@ -256,7 +249,6 @@ async def daily_summary(
 
 @app.get("/items")
 async def list_items():
-    """Distinct item names (useful for dropdowns)."""
     conn = None
     try:
         conn = sqlite3.connect(DATABASE_FILE)
@@ -272,10 +264,7 @@ async def list_items():
             conn.close()
 
 @app.delete("/transactions/{tx_id}", response_model=DeleteResponse)
-async def delete_transaction(
-    tx_id: int = FPath(..., ge=1),
-    api_key: str = Depends(get_api_key)
-):
+async def delete_transaction(tx_id: int = FPath(..., ge=1), api_key: str = Depends(get_api_key)):
     conn = None
     try:
         conn = sqlite3.connect(DATABASE_FILE)

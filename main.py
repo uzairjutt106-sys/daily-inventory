@@ -76,7 +76,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://192.168.0.108:4001",
+        "http://192.168.0.122:3000",
+    "http://192.168.0.122:4000",
+    "http://192.168.0.122:4001",
+    "http://192.168.0.108:4001",
         "http://192.168.0.108:3000",
         "http://192.168.0.108:4000",
         "http://localhost:4000",
@@ -259,6 +262,106 @@ async def list_items():
     except sqlite3.Error as e:
         print(f"Database error during items list: {e}")
         raise HTTPException(status_code=500, detail="Database error: Could not list items.")
+    finally:
+        if conn:
+            conn.close()
+# ---------- SALES ENDPOINTS ----------
+
+class SaleIn(BaseModel):
+    item_name: str = Field(..., example="copper")
+    sale_rate: int = Field(..., gt=0, description="Selling price per kg (integer).")
+    quantity_kg: float = Field(..., gt=0, description="Quantity sold in kilograms.")
+    sale_date: Optional[date] = Field(None, description="Date of sale (defaults to today).")
+
+
+# Ensure 'sales' table exists
+def ensure_sales_table():
+    conn = sqlite3.connect(DATABASE_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sales (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_name TEXT NOT NULL,
+            sale_rate REAL NOT NULL,
+            quantity_kg REAL NOT NULL,
+            sale_date TEXT NOT NULL
+        );
+    """)
+    conn.commit()
+    conn.close()
+
+ensure_sales_table()
+
+
+@app.post("/sales", status_code=201)
+async def create_sale(sale: SaleIn, api_key: str = Depends(get_api_key)):
+    """Record a new sale entry."""
+    conn = None
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        sale_date = (sale.sale_date or date.today()).isoformat()
+
+        cursor.execute("""
+            INSERT INTO sales (item_name, sale_rate, quantity_kg, sale_date)
+            VALUES (?, ?, ?, ?)
+        """, (sale.item_name, sale.sale_rate, sale.quantity_kg, sale_date))
+        conn.commit()
+
+        return {
+            "message": "Sale recorded successfully",
+            "item_name": sale.item_name,
+            "sale_rate": sale.sale_rate,
+            "quantity_kg": sale.quantity_kg,
+            "sale_date": sale_date,
+        }
+    except sqlite3.Error as e:
+        print(f"Database error during sale insertion: {e}")
+        raise HTTPException(status_code=500, detail="Database error: Could not record sale.")
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/sales")
+async def list_sales(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0)):
+    """List all recorded sales."""
+    conn = None
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, item_name, sale_rate, quantity_kg, sale_date
+            FROM sales
+            ORDER BY sale_date DESC, id DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset))
+        rows = [dict(row) for row in cursor.fetchall()]
+        return {"sales": rows, "count": len(rows)}
+    except sqlite3.Error as e:
+        print(f"Database error during sales list: {e}")
+        raise HTTPException(status_code=500, detail="Database error: Could not retrieve sales.")
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.delete("/sales/{sale_id}", response_model=DeleteResponse)
+async def delete_sale(sale_id: int = FPath(..., ge=1), api_key: str = Depends(get_api_key)):
+    """Delete a sale record by ID."""
+    conn = None
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM sales WHERE id = ?", (sale_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Sale not found")
+        conn.commit()
+        return {"deleted_id": sale_id, "message": "Sale deleted"}
+    except sqlite3.Error as e:
+        print(f"Database error during sale delete: {e}")
+        raise HTTPException(status_code=500, detail="Database error: Could not delete sale.")
     finally:
         if conn:
             conn.close()

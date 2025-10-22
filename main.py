@@ -270,14 +270,22 @@ async def update_transaction(
         raise HTTPException(status_code=500, detail="Database error: Could not update transaction.")
     finally:
         conn.close()
-
 @app.get("/summary/daily")
-async def daily_summary(item_name: Optional[str] = Query(None), date_from: Optional[date] = Query(None), date_to: Optional[date] = Query(None)):
+async def daily_summary(
+    item_name: Optional[str] = Query(None),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None)
+):
+    """
+    Returns daily summary with total purchased quantity (kg)
+    and total purchase amount only (no purchase rate).
+    """
     conn = None
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+        
         where, params = [], []
         if item_name:
             where.append("item_name = ?")
@@ -288,25 +296,30 @@ async def daily_summary(item_name: Optional[str] = Query(None), date_from: Optio
         if date_to:
             where.append("transaction_date <= ?")
             params.append(date_to.isoformat())
+        
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+        
         cursor.execute(f"""
             SELECT
               transaction_date,
               ROUND(SUM(quantity_kg), 3) AS total_qty_kg,
-              ROUND(SUM((sale_rate - purchase_rate) * quantity_kg), 2) AS total_profit
+              ROUND(SUM(purchase_rate * quantity_kg), 2) AS total_purchase_amount
             FROM transactions
             {where_sql}
             GROUP BY transaction_date
             ORDER BY transaction_date DESC
         """, params)
+        
         rows = [dict(row) for row in cursor.fetchall()]
         return {"rows": rows}
+    
     except sqlite3.Error as e:
         print(f"Database error during summary: {e}")
         raise HTTPException(status_code=500, detail="Database error: Could not compute summary.")
     finally:
         if conn:
             conn.close()
+
 
 @app.get("/items")
 async def list_items():

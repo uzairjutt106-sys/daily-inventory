@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Header, Depends, Query, Path as FPat
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, conint, confloat  # === NEW: conint, confloat ===
 
 # --- Security Configuration ---
 API_KEY = "@uzair143"
@@ -61,6 +61,14 @@ class DeleteResponse(BaseModel):
     deleted_id: int
     message: str
 
+# === NEW: Payload for updating a transaction (edit) ===
+class TransactionUpdate(BaseModel):
+    item_name: str = Field(..., example="copper")
+    # integers only, > 0 (you asked to not allow points or negative values)
+    purchase_rate: conint(gt=0) = Field(..., example=2200, description="Integer cost per kg")
+    quantity_kg: confloat(gt=0) = Field(..., example=5.0, description="Quantity in kg")
+    transaction_date: date = Field(..., description="YYYY-MM-DD")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
@@ -77,9 +85,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://192.168.0.122:3000",
-    "http://192.168.0.122:4000",
-    "http://192.168.0.122:4001",
-    "http://192.168.0.108:4001",
+        "http://192.168.0.122:4000",
+        "http://192.168.0.122:4001",
+        "http://192.168.0.108:4001",
         "http://192.168.0.108:3000",
         "http://192.168.0.108:4000",
         "http://localhost:4000",
@@ -213,6 +221,56 @@ async def get_all_transactions(
         if conn:
             conn.close()
 
+# === NEW: Edit/Update a transaction ===
+@app.put("/transactions/{tx_id}")
+@app.patch("/transactions/{tx_id}")
+async def update_transaction(
+    tx_id: int = FPath(..., ge=1),
+    payload: TransactionUpdate = ...,
+    api_key: str = Depends(get_api_key),
+):
+    conn = sqlite3.connect(DATABASE_FILE)
+    conn.row_factory = sqlite3.Row
+    try:
+        cur = conn.cursor()
+
+        # ensure exists
+        cur.execute("SELECT id FROM transactions WHERE id = ?", (tx_id,))
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+
+        # update only the fields you allow to change via UI
+        cur.execute(
+            """
+            UPDATE transactions
+               SET item_name = ?, purchase_rate = ?, quantity_kg = ?, transaction_date = ?
+             WHERE id = ?
+            """,
+            (
+                payload.item_name,
+                int(payload.purchase_rate),
+                float(payload.quantity_kg),
+                payload.transaction_date.isoformat(),
+                tx_id,
+            ),
+        )
+        if cur.rowcount != 1:
+            raise HTTPException(status_code=500, detail="Update failed (no row changed)")
+
+        conn.commit()
+
+        # return updated row
+        cur.execute(
+            "SELECT id, item_name, purchase_rate, sale_rate, quantity_kg, transaction_date FROM transactions WHERE id = ?",
+            (tx_id,),
+        )
+        return {"message": "Transaction updated", "transaction": dict(cur.fetchone())}
+    except sqlite3.Error as e:
+        print("DB error (update):", e)
+        raise HTTPException(status_code=500, detail="Database error: Could not update transaction.")
+    finally:
+        conn.close()
+
 @app.get("/summary/daily")
 async def daily_summary(item_name: Optional[str] = Query(None), date_from: Optional[date] = Query(None), date_to: Optional[date] = Query(None)):
     conn = None
@@ -265,16 +323,14 @@ async def list_items():
     finally:
         if conn:
             conn.close()
-# ---------- SALES ENDPOINTS ----------
 
+# ---------- SALES ENDPOINTS ----------
 class SaleIn(BaseModel):
     item_name: str = Field(..., example="copper")
     sale_rate: int = Field(..., gt=0, description="Selling price per kg (integer).")
     quantity_kg: float = Field(..., gt=0, description="Quantity sold in kilograms.")
     sale_date: Optional[date] = Field(None, description="Date of sale (defaults to today).")
 
-
-# Ensure 'sales' table exists
 def ensure_sales_table():
     conn = sqlite3.connect(DATABASE_FILE)
     cursor = conn.cursor()
@@ -292,7 +348,6 @@ def ensure_sales_table():
 
 ensure_sales_table()
 
-
 @app.post("/sales", status_code=201)
 async def create_sale(sale: SaleIn, api_key: str = Depends(get_api_key)):
     """Record a new sale entry."""
@@ -300,12 +355,12 @@ async def create_sale(sale: SaleIn, api_key: str = Depends(get_api_key)):
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
-        sale_date = (sale.sale_date or date.today()).isoformat()
+        sale_date_val = (sale.sale_date or date.today()).isoformat()
 
         cursor.execute("""
             INSERT INTO sales (item_name, sale_rate, quantity_kg, sale_date)
             VALUES (?, ?, ?, ?)
-        """, (sale.item_name, sale.sale_rate, sale.quantity_kg, sale_date))
+        """, (sale.item_name, sale.sale_rate, sale.quantity_kg, sale_date_val))
         conn.commit()
 
         return {
@@ -313,7 +368,7 @@ async def create_sale(sale: SaleIn, api_key: str = Depends(get_api_key)):
             "item_name": sale.item_name,
             "sale_rate": sale.sale_rate,
             "quantity_kg": sale.quantity_kg,
-            "sale_date": sale_date,
+            "sale_date": sale_date_val,
         }
     except sqlite3.Error as e:
         print(f"Database error during sale insertion: {e}")
@@ -321,7 +376,6 @@ async def create_sale(sale: SaleIn, api_key: str = Depends(get_api_key)):
     finally:
         if conn:
             conn.close()
-
 
 @app.get("/sales")
 async def list_sales(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0)):
@@ -345,7 +399,6 @@ async def list_sales(limit: int = Query(100, ge=1, le=1000), offset: int = Query
     finally:
         if conn:
             conn.close()
-
 
 @app.delete("/sales/{sale_id}", response_model=DeleteResponse)
 async def delete_sale(sale_id: int = FPath(..., ge=1), api_key: str = Depends(get_api_key)):

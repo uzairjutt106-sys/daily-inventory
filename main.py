@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Header, Depends, Query, Path as FPat
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, conint, confloat  # === NEW: conint, confloat ===
+from pydantic import BaseModel, Field
 
 # --- Security Configuration ---
 API_KEY = "@uzair143"
@@ -60,14 +60,6 @@ class Transaction(BaseModel):
 class DeleteResponse(BaseModel):
     deleted_id: int
     message: str
-
-# === NEW: Payload for updating a transaction (edit) ===
-class TransactionUpdate(BaseModel):
-    item_name: str = Field(..., example="copper")
-    # integers only, > 0 (you asked to not allow points or negative values)
-    purchase_rate: conint(gt=0) = Field(..., example=2200, description="Integer cost per kg")
-    quantity_kg: confloat(gt=0) = Field(..., example=5.0, description="Quantity in kg")
-    transaction_date: date = Field(..., description="YYYY-MM-DD")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -134,6 +126,70 @@ async def favicon():
 async def health():
     return {"ok": True}
 
+# --------- Helpers for sales profit computation ----------
+
+def ensure_sales_table():
+    """Create sales table if missing and make sure 'profit' column exists."""
+    conn = sqlite3.connect(DATABASE_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sales (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_name TEXT NOT NULL,
+            sale_rate REAL NOT NULL,
+            quantity_kg REAL NOT NULL,
+            sale_date TEXT NOT NULL
+        );
+    """)
+    # Add profit column if it does not exist
+    try:
+        cursor.execute("ALTER TABLE sales ADD COLUMN profit REAL;")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+    conn.commit()
+    conn.close()
+
+def get_weighted_avg_purchase(item_name: str) -> float:
+    """Compute weighted-average purchase rate for an item from transactions."""
+    conn = sqlite3.connect(DATABASE_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            COALESCE(SUM(purchase_rate * quantity_kg), 0.0) AS total_cost,
+            COALESCE(SUM(quantity_kg), 0.0) AS total_qty
+        FROM transactions
+        WHERE item_name = ?
+          AND purchase_rate IS NOT NULL
+    """, (item_name,))
+    row = cursor.fetchone()
+    conn.close()
+    total_cost = row[0] or 0.0
+    total_qty = row[1] or 0.0
+    return (total_cost / total_qty) if total_qty > 0 else 0.0
+
+def backfill_sales_profit():
+    """Compute and fill missing profit values for existing sales rows."""
+    conn = sqlite3.connect(DATABASE_FILE)
+    cursor = conn.cursor()
+    # Find rows where profit is NULL
+    cursor.execute("SELECT id, item_name, sale_rate, quantity_kg FROM sales WHERE profit IS NULL")
+    rows = cursor.fetchall()
+    updated = 0
+    for sale_id, item_name, sale_rate, qty in rows:
+        avg_purchase = get_weighted_avg_purchase(item_name)
+        profit = (sale_rate - avg_purchase) * qty
+        cursor.execute("UPDATE sales SET profit = ? WHERE id = ?", (profit, sale_id))
+        updated += 1
+    conn.commit()
+    conn.close()
+    if updated:
+        print(f"Backfilled profit for {updated} sale(s).")
+
+# Run sales table ensure + backfill once at import
+ensure_sales_table()
+backfill_sales_profit()
+
 # --------- API Endpoints ----------
 
 @app.post("/transactions", status_code=201)
@@ -158,12 +214,11 @@ async def record_transaction(transaction: Transaction, api_key: str = Depends(ge
         """, data)
         conn.commit()
 
-        # ✅ Calculate profit only if both rates exist
+        # Profit is only meaningful on sales; keep return the same as before
+        total_profit = None
         if transaction.sale_rate is not None and transaction.purchase_rate is not None:
             unit_profit = transaction.sale_rate - transaction.purchase_rate
             total_profit = unit_profit * transaction.quantity_kg
-        else:
-            total_profit = None
 
         return {
             "message": "Transaction recorded successfully",
@@ -221,71 +276,13 @@ async def get_all_transactions(
         if conn:
             conn.close()
 
-# === NEW: Edit/Update a transaction ===
-@app.put("/transactions/{tx_id}")
-@app.patch("/transactions/{tx_id}")
-async def update_transaction(
-    tx_id: int = FPath(..., ge=1),
-    payload: TransactionUpdate = ...,
-    api_key: str = Depends(get_api_key),
-):
-    conn = sqlite3.connect(DATABASE_FILE)
-    conn.row_factory = sqlite3.Row
-    try:
-        cur = conn.cursor()
-
-        # ensure exists
-        cur.execute("SELECT id FROM transactions WHERE id = ?", (tx_id,))
-        if cur.fetchone() is None:
-            raise HTTPException(status_code=404, detail="Transaction not found")
-
-        # update only the fields you allow to change via UI
-        cur.execute(
-            """
-            UPDATE transactions
-               SET item_name = ?, purchase_rate = ?, quantity_kg = ?, transaction_date = ?
-             WHERE id = ?
-            """,
-            (
-                payload.item_name,
-                int(payload.purchase_rate),
-                float(payload.quantity_kg),
-                payload.transaction_date.isoformat(),
-                tx_id,
-            ),
-        )
-        if cur.rowcount != 1:
-            raise HTTPException(status_code=500, detail="Update failed (no row changed)")
-
-        conn.commit()
-
-        # return updated row
-        cur.execute(
-            "SELECT id, item_name, purchase_rate, sale_rate, quantity_kg, transaction_date FROM transactions WHERE id = ?",
-            (tx_id,),
-        )
-        return {"message": "Transaction updated", "transaction": dict(cur.fetchone())}
-    except sqlite3.Error as e:
-        print("DB error (update):", e)
-        raise HTTPException(status_code=500, detail="Database error: Could not update transaction.")
-    finally:
-        conn.close()
 @app.get("/summary/daily")
-async def daily_summary(
-    item_name: Optional[str] = Query(None),
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None)
-):
-    """
-    Returns daily summary with total purchased quantity (kg)
-    and total purchase amount only (no purchase rate).
-    """
+async def daily_summary(item_name: Optional[str] = Query(None), date_from: Optional[date] = Query(None), date_to: Optional[date] = Query(None)):
     conn = None
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        
         where, params = [], []
         if item_name:
             where.append("item_name = ?")
@@ -296,30 +293,25 @@ async def daily_summary(
         if date_to:
             where.append("transaction_date <= ?")
             params.append(date_to.isoformat())
-        
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-        
         cursor.execute(f"""
             SELECT
               transaction_date,
               ROUND(SUM(quantity_kg), 3) AS total_qty_kg,
-              ROUND(SUM(purchase_rate * quantity_kg), 2) AS total_purchase_amount
+              ROUND(SUM((COALESCE(sale_rate,0) - COALESCE(purchase_rate,0)) * quantity_kg), 2) AS total_profit
             FROM transactions
             {where_sql}
             GROUP BY transaction_date
             ORDER BY transaction_date DESC
         """, params)
-        
         rows = [dict(row) for row in cursor.fetchall()]
         return {"rows": rows}
-    
     except sqlite3.Error as e:
         print(f"Database error during summary: {e}")
         raise HTTPException(status_code=500, detail="Database error: Could not compute summary.")
     finally:
         if conn:
             conn.close()
-
 
 @app.get("/items")
 async def list_items():
@@ -338,42 +330,33 @@ async def list_items():
             conn.close()
 
 # ---------- SALES ENDPOINTS ----------
+
 class SaleIn(BaseModel):
     item_name: str = Field(..., example="copper")
     sale_rate: int = Field(..., gt=0, description="Selling price per kg (integer).")
     quantity_kg: float = Field(..., gt=0, description="Quantity sold in kilograms.")
     sale_date: Optional[date] = Field(None, description="Date of sale (defaults to today).")
 
-def ensure_sales_table():
-    conn = sqlite3.connect(DATABASE_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS sales (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_name TEXT NOT NULL,
-            sale_rate REAL NOT NULL,
-            quantity_kg REAL NOT NULL,
-            sale_date TEXT NOT NULL
-        );
-    """)
-    conn.commit()
-    conn.close()
-
 ensure_sales_table()
+backfill_sales_profit()
 
 @app.post("/sales", status_code=201)
 async def create_sale(sale: SaleIn, api_key: str = Depends(get_api_key)):
-    """Record a new sale entry."""
+    """Record a new sale entry with computed profit saved to DB."""
     conn = None
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
-        sale_date_val = (sale.sale_date or date.today()).isoformat()
+        sale_date = (sale.sale_date or date.today()).isoformat()
+
+        # Compute weighted average purchase for this item
+        avg_purchase = get_weighted_avg_purchase(sale.item_name)
+        profit = (float(sale.sale_rate) - avg_purchase) * float(sale.quantity_kg)
 
         cursor.execute("""
-            INSERT INTO sales (item_name, sale_rate, quantity_kg, sale_date)
-            VALUES (?, ?, ?, ?)
-        """, (sale.item_name, sale.sale_rate, sale.quantity_kg, sale_date_val))
+            INSERT INTO sales (item_name, sale_rate, quantity_kg, sale_date, profit)
+            VALUES (?, ?, ?, ?, ?)
+        """, (sale.item_name, sale.sale_rate, sale.quantity_kg, sale_date, profit))
         conn.commit()
 
         return {
@@ -381,7 +364,8 @@ async def create_sale(sale: SaleIn, api_key: str = Depends(get_api_key)):
             "item_name": sale.item_name,
             "sale_rate": sale.sale_rate,
             "quantity_kg": sale.quantity_kg,
-            "sale_date": sale_date_val,
+            "sale_date": sale_date,
+            "profit": round(profit, 2),
         }
     except sqlite3.Error as e:
         print(f"Database error during sale insertion: {e}")
@@ -392,14 +376,14 @@ async def create_sale(sale: SaleIn, api_key: str = Depends(get_api_key)):
 
 @app.get("/sales")
 async def list_sales(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0)):
-    """List all recorded sales."""
+    """List all recorded sales (now includes profit)."""
     conn = None
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, item_name, sale_rate, quantity_kg, sale_date
+            SELECT id, item_name, sale_rate, quantity_kg, sale_date, profit
             FROM sales
             ORDER BY sale_date DESC, id DESC
             LIMIT ? OFFSET ?

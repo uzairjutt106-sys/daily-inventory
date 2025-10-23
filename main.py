@@ -275,6 +275,75 @@ async def get_all_transactions(
     finally:
         if conn:
             conn.close()
+            # ✅ Update an existing transaction
+class TransactionUpdate(BaseModel):
+    item_name: str = Field(..., example="copper")
+    purchase_rate: Optional[float] = Field(None, ge=0, description="Cost per kg (can be null)")
+    quantity_kg: float = Field(..., gt=0, description="Quantity in kg")
+    transaction_date: Optional[date] = Field(None, description="YYYY-MM-DD")
+
+@app.put("/transactions/{tx_id}")
+async def update_transaction(
+    tx_id: int = FPath(..., ge=1),
+    payload: TransactionUpdate = ...,
+    api_key: str = Depends(get_api_key),
+):
+    """
+    Update a transaction row. Keeps existing sale_rate unchanged.
+    Frontend sends: item_name, purchase_rate (int), quantity_kg, transaction_date (YYYY-MM-DD).
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        # Ensure record exists
+        cur.execute("SELECT id, transaction_date FROM transactions WHERE id = ?", (tx_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+
+        tx_date = (payload.transaction_date or date.fromisoformat(row["transaction_date"])).isoformat()
+
+        cur.execute(
+            """
+            UPDATE transactions
+               SET item_name = ?,
+                   purchase_rate = ?,
+                   quantity_kg = ?,
+                   transaction_date = ?
+             WHERE id = ?
+            """,
+            (
+                payload.item_name.strip(),
+                payload.purchase_rate,
+                float(payload.quantity_kg),
+                tx_date,
+                tx_id,
+            ),
+        )
+
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+
+        conn.commit()
+
+        # Return updated record
+        cur.execute(
+            "SELECT id, item_name, purchase_rate, sale_rate, quantity_kg, transaction_date FROM transactions WHERE id = ?",
+            (tx_id,),
+        )
+        updated = dict(cur.fetchone())
+        return {"message": "Transaction updated", "transaction": updated}
+
+    except sqlite3.Error as e:
+        print(f"DB error during update: {e}")
+        raise HTTPException(status_code=500, detail="Database error: Could not update transaction.")
+    finally:
+        if conn:
+            conn.close()
+
 
 @app.get("/summary/daily")
 async def daily_summary(item_name: Optional[str] = Query(None), date_from: Optional[date] = Query(None), date_to: Optional[date] = Query(None)):

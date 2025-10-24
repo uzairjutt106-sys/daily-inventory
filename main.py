@@ -189,6 +189,72 @@ def backfill_sales_profit():
 # Run sales table ensure + backfill once at import
 ensure_sales_table()
 backfill_sales_profit()
+from datetime import datetime
+
+def _dt(s: str) -> datetime:
+    return datetime.strptime(s, "%Y-%m-%d")
+
+def compute_profit_rows(granularity: str, start_date: str, end_date: str):
+    """
+    Returns a list of dict rows with: bucket_key, bucket_start, bucket_end, total_profit
+    based on rows in the 'sales' table (uses 'profit' column).
+    """
+    conn = sqlite3.connect(DATABASE_FILE)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    # Guard
+    if granularity not in ("daily", "weekly", "monthly", "custom"):
+        conn.close()
+        raise ValueError("granularity must be one of: daily|weekly|monthly|custom")
+
+    # Build SQL grouping for buckets
+    if granularity == "daily":
+        group_sql = """strftime('%Y-%m-%d', sale_date)"""
+        sel_bucket = "strftime('%Y-%m-%d', sale_date) AS bucket_key"
+        sel_start  = "strftime('%Y-%m-%d', sale_date) AS bucket_start"
+        sel_end    = "strftime('%Y-%m-%d', sale_date) AS bucket_end"
+    elif granularity == "weekly":
+        # ISO week: use year-week; note: SQLite week is %W (Mon-start, 00-53). Good enough for internal use.
+        sel_bucket = "strftime('%Y', sale_date) || '-W' || printf('%02d', strftime('%W', sale_date)) AS bucket_key"
+        sel_start  = "date(sale_date, '-' || strftime('%w', sale_date) || ' days') AS bucket_start"
+        sel_end    = "date(sale_date, '+' || (6 - strftime('%w', sale_date)) || ' days') AS bucket_end"
+        group_sql  = "strftime('%Y', sale_date) || '-W' || printf('%02d', strftime('%W', sale_date))"
+    elif granularity == "monthly":
+        sel_bucket = "strftime('%Y-%m', sale_date) AS bucket_key"
+        sel_start  = "date(strftime('%Y-%m-01', sale_date)) AS bucket_start"
+        sel_end    = "date(strftime('%Y-%m-01', sale_date), '+1 month', '-1 day') AS bucket_end"
+        group_sql  = "strftime('%Y-%m', sale_date)"
+    else:  # custom => single bucket: whole range as one line
+        cur.execute("""
+            SELECT
+              'custom' AS bucket_key,
+              ?        AS bucket_start,
+              ?        AS bucket_end,
+              ROUND(COALESCE(SUM(profit), 0), 2) AS total_profit
+            FROM sales
+            WHERE date(sale_date) BETWEEN date(?) AND date(?)
+        """, (start_date, end_date, start_date, end_date))
+        rows = [dict(cur.fetchone())]
+        conn.close()
+        return rows
+
+    # Non-custom: group by bucket within the range
+    cur.execute(f"""
+        SELECT
+          {sel_bucket},
+          {sel_start},
+          {sel_end},
+          ROUND(COALESCE(SUM(profit), 0), 2) AS total_profit
+        FROM sales
+        WHERE date(sale_date) BETWEEN date(?) AND date(?)
+        GROUP BY {group_sql}
+        ORDER BY bucket_key ASC
+    """, (start_date, end_date))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
 
 # --------- API Endpoints ----------
 
@@ -443,6 +509,33 @@ async def create_sale(sale: SaleIn, api_key: str = Depends(get_api_key)):
     finally:
         if conn:
             conn.close()
+
+# --------- Profit storage (materialized) ----------
+def ensure_profit_tables():
+    """
+    Stores aggregated profit rows you generate.
+    One row per bucket (daily/weekly/monthly/custom).
+    """
+    conn = sqlite3.connect(DATABASE_FILE)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS profit_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            granularity TEXT NOT NULL,            -- 'daily' | 'weekly' | 'monthly' | 'custom'
+            bucket_key TEXT NOT NULL,             -- e.g. '2025-10-26' (daily), '2025-W43' (weekly), '2025-10' (monthly)
+            start_date TEXT NOT NULL,             -- bucket start
+            end_date   TEXT NOT NULL,             -- bucket end (inclusive)
+            total_profit REAL NOT NULL DEFAULT 0, -- sum of sales.profit in bucket
+            created_at TEXT NOT NULL              -- when this report row was generated
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_profit_reports_lookup ON profit_reports(granularity, start_date, end_date, bucket_key)")
+    conn.commit()
+    conn.close()
+
+ensure_profit_tables()
+
+
 def create_stocks_view():
     """Creates a SQL view 'stocks_view' that shows per-item net stock and profit."""
     conn = sqlite3.connect(DATABASE_FILE)
@@ -483,6 +576,67 @@ def create_stocks_view():
     conn.close()
     print("✅ stocks_view created successfully.")
 create_stocks_view()         
+from pydantic import BaseModel
+
+class ProfitGenerateIn(BaseModel):
+    start_date: str  # 'YYYY-MM-DD'
+    end_date: str    # 'YYYY-MM-DD'
+    granularity: str # 'daily' | 'weekly' | 'monthly' | 'custom'
+
+@app.post("/profits/generate", status_code=201)
+async def generate_profits(body: ProfitGenerateIn, api_key: str = Depends(get_api_key)):
+    """
+    Computes profits from sales.profit for the given range & granularity,
+    then INSERTs rows into 'profit_reports'. Returns the inserted rows.
+    """
+    start_date = body.start_date
+    end_date   = body.end_date
+    gran       = body.granularity
+
+    # Compute rows
+    rows = compute_profit_rows(gran, start_date, end_date)
+
+    # Save into table
+    conn = sqlite3.connect(DATABASE_FILE)
+    cur = conn.cursor()
+
+    # Optional: remove overlapping existing rows for same granularity & date window
+    cur.execute("""
+    DELETE FROM profit_reports
+     WHERE granularity = ?
+       AND date(end_date) >= date(?)   -- bucket ends on/after requested start
+       AND date(start_date) <= date(?) -- bucket starts on/before requested end
+""", (gran, start_date, end_date))
+
+
+    now = date.today().isoformat()
+    for r in rows:
+        cur.execute("""
+            INSERT INTO profit_reports (granularity, bucket_key, start_date, end_date, total_profit, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            gran,
+            r["bucket_key"],
+            r["bucket_start"],
+            r["bucket_end"],
+            float(r["total_profit"] or 0),
+            now
+        ))
+    conn.commit()
+
+    # Return what we just stored
+    cur.execute("""
+        SELECT id, granularity, bucket_key, start_date, end_date, total_profit, created_at
+        FROM profit_reports
+        WHERE granularity = ?
+          AND date(start_date) >= date(?)
+          AND date(end_date)   <= date(?)
+        ORDER BY bucket_key ASC
+    """, (gran, start_date, end_date))
+    out = [dict(zip([c[0] for c in cur.description], row)) for row in cur.fetchall()]
+    conn.close()
+
+    return {"inserted": out, "count": len(out)}
 
 @app.get("/sales")
 async def list_sales(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0)):
@@ -578,6 +732,48 @@ async def stocks_summary():
     finally:
         if conn:
             conn.close()
+@app.get("/profits")
+async def list_profits(
+    granularity: Optional[str] = Query(None, description="daily|weekly|monthly|custom"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str]   = Query(None),
+    limit: int = Query(500, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+):
+    conn = sqlite3.connect(DATABASE_FILE)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    where = []
+    args  = []
+
+    if granularity:
+        where.append("granularity = ?")
+        args.append(granularity)
+
+    # Overlap logic for ranges:
+    # include buckets where (bucket_end >= start) AND (bucket_start <= end)
+    if start_date:
+        where.append("date(end_date) >= date(?)")
+        args.append(start_date)
+    if end_date:
+        where.append("date(start_date) <= date(?)")
+        args.append(end_date)
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    cur.execute(f"""
+        SELECT id, granularity, bucket_key, start_date, end_date, total_profit, created_at
+        FROM profit_reports
+        {where_sql}
+        ORDER BY bucket_key ASC
+        LIMIT ? OFFSET ?
+    """, args + [limit, offset])
+
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return {"profits": rows, "count": len(rows)}
+
+
 
 @app.delete("/transactions/{tx_id}", response_model=DeleteResponse)
 async def delete_transaction(tx_id: int = FPath(..., ge=1), api_key: str = Depends(get_api_key)):

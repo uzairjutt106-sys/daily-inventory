@@ -91,6 +91,9 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://192.168.0.113:3000",
+        'http://192.168.0.125:4001',
+        'http://192.168.0.125:4000',
+        'http://192.168.0.125:3001',
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -127,7 +130,6 @@ async def health():
     return {"ok": True}
 
 # --------- Helpers for sales profit computation ----------
-
 def ensure_sales_table():
     """Create sales table if missing and make sure 'profit' column exists."""
     conn = sqlite3.connect(DATABASE_FILE)
@@ -138,17 +140,15 @@ def ensure_sales_table():
             item_name TEXT NOT NULL,
             sale_rate REAL NOT NULL,
             quantity_kg REAL NOT NULL,
-            sale_date TEXT NOT NULL
+            sale_date TEXT NOT NULL,
+            profit REAL
         );
     """)
-    # Add profit column if it does not exist
-    try:
-        cursor.execute("ALTER TABLE sales ADD COLUMN profit REAL;")
-    except sqlite3.OperationalError:
-        # Column already exists
-        pass
+    # 🔹 Helpful for per-item aggregation (for /stocks summary)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_item ON sales(item_name);")
     conn.commit()
     conn.close()
+
 
 def get_weighted_avg_purchase(item_name: str) -> float:
     """Compute weighted-average purchase rate for an item from transactions."""
@@ -275,7 +275,8 @@ async def get_all_transactions(
     finally:
         if conn:
             conn.close()
-            # ✅ Update an existing transaction
+
+# ✅ Update an existing transaction (moved to proper top-level)
 class TransactionUpdate(BaseModel):
     item_name: str = Field(..., example="copper")
     purchase_rate: Optional[float] = Field(None, ge=0, description="Cost per kg (can be null)")
@@ -442,6 +443,46 @@ async def create_sale(sale: SaleIn, api_key: str = Depends(get_api_key)):
     finally:
         if conn:
             conn.close()
+def create_stocks_view():
+    """Creates a SQL view 'stocks_view' that shows per-item net stock and profit."""
+    conn = sqlite3.connect(DATABASE_FILE)
+    cur = conn.cursor()
+
+    cur.execute("DROP VIEW IF EXISTS stocks_view;")
+    cur.execute("""
+        CREATE VIEW IF NOT EXISTS stocks_view AS
+        WITH items AS (
+            SELECT item_name FROM transactions
+            UNION
+            SELECT item_name FROM sales
+        ),
+        p AS (
+            SELECT item_name, SUM(quantity_kg) AS purchased
+            FROM transactions
+            GROUP BY item_name
+        ),
+        s AS (
+            SELECT item_name,
+                   SUM(quantity_kg) AS sold,
+                   SUM(COALESCE(profit, 0)) AS realized_profit
+            FROM sales
+            GROUP BY item_name
+        )
+        SELECT
+            i.item_name AS item_name,
+            ROUND(COALESCE(p.purchased, 0), 3) AS purchased_kg,
+            ROUND(COALESCE(s.sold, 0), 3) AS sold_kg,
+            ROUND(COALESCE(p.purchased, 0) - COALESCE(s.sold, 0), 3) AS net_kg,
+            ROUND(COALESCE(s.realized_profit, 0), 2) AS realized_profit
+        FROM items i
+        LEFT JOIN p ON p.item_name = i.item_name
+        LEFT JOIN s ON s.item_name = i.item_name
+        ORDER BY i.item_name COLLATE NOCASE ASC;
+    """)
+    conn.commit()
+    conn.close()
+    print("✅ stocks_view created successfully.")
+create_stocks_view()         
 
 @app.get("/sales")
 async def list_sales(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0)):
@@ -481,6 +522,59 @@ async def delete_sale(sale_id: int = FPath(..., ge=1), api_key: str = Depends(ge
     except sqlite3.Error as e:
         print(f"Database error during sale delete: {e}")
         raise HTTPException(status_code=500, detail="Database error: Could not delete sale.")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/stocks")
+async def stocks_summary():
+    """
+    Returns per-item stock summary:
+      - purchased_kg: total purchases
+      - sold_kg: total sales
+      - net_kg: purchased - sold
+      - realized_profit: total profit (sum of sales.profit)
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("""
+            WITH items AS (
+              SELECT item_name FROM transactions
+              UNION
+              SELECT item_name FROM sales
+            ),
+            p AS (
+              SELECT item_name, SUM(quantity_kg) AS purchased
+              FROM transactions
+              GROUP BY item_name
+            ),
+            s AS (
+              SELECT item_name,
+                     SUM(quantity_kg) AS sold,
+                     SUM(COALESCE(profit, 0)) AS realized_profit
+              FROM sales
+              GROUP BY item_name
+            )
+            SELECT
+              i.item_name AS item_name,
+              ROUND(COALESCE(p.purchased, 0), 3) AS purchased_kg,
+              ROUND(COALESCE(s.sold, 0), 3) AS sold_kg,
+              ROUND(COALESCE(p.purchased, 0) - COALESCE(s.sold, 0), 3) AS net_kg,
+              ROUND(COALESCE(s.realized_profit, 0), 2) AS realized_profit
+            FROM items i
+            LEFT JOIN p ON p.item_name = i.item_name
+            LEFT JOIN s ON s.item_name = i.item_name
+            ORDER BY i.item_name COLLATE NOCASE ASC;
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+        return {"stocks": rows, "count": len(rows)}
+    except sqlite3.Error as e:
+        print(f"DB error during stocks summary: {e}")
+        raise HTTPException(status_code=500, detail="Database error: Could not compute stocks.")
     finally:
         if conn:
             conn.close()

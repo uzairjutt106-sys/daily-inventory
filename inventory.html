@@ -2,504 +2,472 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Daily Inventory UI</title>
+  <title>Scrapit — Inventory</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="/static/favicon.ico">
-
-  <!-- THEME (light + dark) -->
   <style>
-    /* Light (default) */
-    :root{
-      --bg:#ffffff; --card:#ffffff; --border:#e5e7eb;
-      --muted:#6b7280; --text:#111827; --accent:#16a34a; --danger:#dc2626;
-      --input-bg:#ffffff; --input-border:#cbd5e1; --chip-bg:#f8fafc; --tab-active:#f1f5f9;
-    }
-    /* Dark */
-    :root[data-theme="dark"]{
-      --bg:#0f172a; --card:#111827; --border:#1f2937;
-      --muted:#94a3b8; --text:#e5e7eb; --accent:#22c55e; --danger:#ef4444;
-      --input-bg:#0b1220; --input-border:#22304a; --chip-bg:#0b1220; --tab-active:#1b2336;
-    }
-
-    *{ box-sizing:border-box }
-    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; background:var(--bg); color:var(--text); }
-    header{ padding:20px; border-bottom:1px solid var(--border); background:var(--card); position:sticky; top:0; z-index:10; }
-    h1{ margin:0; font-size:20px; }
-    .wrap{ max-width:1100px; margin:0 auto; padding:20px; display:grid; gap:18px; }
-
-    .card{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
-
-    .row{ display:grid; gap:12px; grid-template-columns:repeat(12,1fr); align-items:end; }
-    .col-2{grid-column:span 2}.col-3{grid-column:span 3}.col-4{grid-column:span 4}.col-6{grid-column:span 6}.col-8{grid-column:span 8}.col-12{grid-column:span 12}
-
-    label{ display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
-    input,select{ width:100%; padding:10px 12px; background:var(--input-bg); color:var(--text); border:1px solid var(--input-border); border-radius:10px; outline:none; }
-    input::placeholder{ color:#9ca3af; }
-
-    button{ padding:10px 14px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer; }
-    button:hover{ filter:brightness(0.98); }
-    button.primary{ background:linear-gradient(180deg,#22c55e,#16a34a); border-color:#16a34a; color:#ffffff; font-weight:600; }
-    button.secondary{ background:var(--card); }
-    button.danger{ border-color:#fecaca; background:#fff1f2; color:#991b1b; }
-    :root[data-theme="dark"] button.danger{ border-color:#7f1d1d; background:#1f0e10; color:#fca5a5; }
-
-    .controls{ display:flex; gap:10px; flex-wrap:wrap; }
-    .status{ font-size:13px; color:var(--muted); }
-    .status.ok{ color:var(--accent); }
-    .status.err{ color:var(--danger); }
-
-    table{ width:100%; border-collapse:collapse; margin-top:10px; background:var(--card); }
-    th,td{ padding:10px; border-bottom:1px solid var(--border); text-align:left; font-size:14px; }
-    th{ color:#374151; font-weight:600; background:#f8fafc; }
-    :root[data-theme="dark"] th{ color:#9fb0c6; background:#0b1220; }
-    tfoot td{ font-weight:700; background:#fafafa; }
-    :root[data-theme="dark"] tfoot td{ background:#0b1220; }
-
-    .pill{ display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--border); background:var(--chip-bg); font-size:12px; color:#334155; }
-    :root[data-theme="dark"] .pill{ color:#c7d2fe; }
-
-    .tabs{ display:flex; gap:8px; }
-    .tab{ padding:8px 12px; border:1px solid var(--border); border-radius:999px; cursor:pointer; background:var(--card); }
-    .tab.active{ background:var(--tab-active); }
-
-    .hidden{ display:none; }
-    .right{ display:flex; gap:10px; align-items:center; }
-
-    @media (max-width:820px){
-      .row{ grid-template-columns:1fr; }
-      .col-2,.col-3,.col-4,.col-6,.col-8,.col-12{ grid-column:1/-1; }
-      table{ font-size:13px; }
-      th,td{ padding:8px; }
-      .right{ flex-wrap:wrap; justify-content:flex-start; }
-    }
+    :root { --bg:#0b1020; --panel:#111733; --muted:#8aa0ff; --text:#e8ecff; --red:#e5484d; --green:#2bb673; --yellow:#e6b800; }
+    *{box-sizing:border-box;}
+    body{margin:0;background:linear-gradient(135deg,#0a0f2a 0%,#0d1233 100%);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;color:var(--text);}
+    .wrap{max-width:1100px;margin:24px auto;padding:0 16px;}
+    .status{padding:8px 12px;border-radius:10px;margin-bottom:10px;font-weight:600;display:inline-block}
+    .ok{background:#14351e;color:#7ff7b0;border:1px solid #256c3f}
+    .bad{background:#3b1424;color:#ffafc2;border:1px solid #8a2d49}
+    h1{font-size:28px;margin:6px 0 18px 0;text-align:center}
+    h2{font-size:20px;margin:0 0 10px 0;color:var(--muted)}
+    .card{background:rgba(17,23,51,.7);border:1px solid rgba(138,160,255,.15);backdrop-filter:blur(8px);padding:14px;border-radius:14px;margin:14px 0;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+    .grid{display:grid;gap:10px}
+    .g2{grid-template-columns:repeat(2,1fr)}
+    .g4{grid-template-columns:repeat(4,1fr)}
+    .g5{grid-template-columns:repeat(5,1fr)}
+    .g6{grid-template-columns:repeat(6,1fr)}
+    @media (max-width:880px){.g6,.g5,.g4{grid-template-columns:repeat(2,1fr)}}
+    input,button,select{width:100%;padding:10px;border-radius:10px;border:1px solid rgba(138,160,255,.25);background:#0f1530;color:var(--text);outline:none}
+    input[type="number"]{appearance:textfield}
+    input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{appearance:none;margin:0}
+    button{cursor:pointer;font-weight:600}
+    .btn-primary{background:#2a4bff;border-color:#5168ff}
+    .btn-warn{background:var(--yellow);border-color:#e0c44d;color:#101222}
+    .btn-danger{background:#b3261e;border-color:#e5484d}
+    .btn-ok{background:#256c3f;border-color:#2bb673}
+    table{width:100%;border-collapse:collapse;background:#0f1430;border:1px solid rgba(138,160,255,.15);border-radius:14px;overflow:hidden}
+    thead{background:#151a3b}
+    th,td{padding:10px 12px;text-align:left;border-top:1px solid rgba(138,160,255,.08)}
+    .right{text-align:right}
+    .muted{color:#9fb0ff}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid rgba(138,160,255,.28);background:#0e1535}
+    .flex{display:flex;gap:10px;align-items:center}
+    .space{height:8px}
   </style>
 </head>
 <body>
-  <header>
-    <div class="wrap" style="padding:0; display:flex; justify-content:space-between; align-items:center;">
-      <h1>Daily Inventory</h1>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <div class="tabs">
-          <button class="tab active" id="tabTransactions">Transactions</button>
-          <button class="tab" id="tabSummary">Daily Summary</button>
+  <div class="wrap">
+    <div id="conn" class="status pill">checking API…</div>
+    <h1>📦 Scrapit</h1>
+
+    <!-- Add Purchase -->
+    <div class="card">
+      <h2>Add Purchase</h2>
+      <form id="form-add">
+        <div class="grid g6">
+          <input id="add-item" list="items-list" placeholder="Item name" required />
+          <input id="add-rate" type="number" inputmode="numeric" step="1" min="1" placeholder="Purchase rate (int)" required />
+          <input id="add-qty" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="Quantity (kg)" required />
+          <input id="add-date" type="date" />
+          <button class="btn-primary" type="submit">Add</button>
+          <button id="btn-reset" type="button">Reset</button>
         </div>
-        <button id="themeToggle" class="secondary" title="Toggle theme">🌓</button>
+      </form>
+      <datalist id="items-list"></datalist>
+    </div>
+
+    <!-- Filter -->
+    <div class="card">
+      <h2>Filter Purchases</h2>
+      <div class="grid g4">
+        <input id="f-item" placeholder="Filter by item" />
+        <input id="f-from" type="date" />
+        <input id="f-to" type="date" />
+        <button id="btn-refetch">Refetch</button>
       </div>
     </div>
-  </header>
 
-  <main class="wrap">
-    <!-- Connection / Auth -->
-    <section class="card">
-      <div class="row">
-        <div class="col-6">
-          <label>API Base URL <span class="pill">leave empty for same origin</span></label>
-          <input id="apiBase" placeholder="e.g. http://127.0.0.1:8000" />
-        </div>
-        <div class="col-6">
-          <label>X-API-Key</label>
-          <input id="apiKey" placeholder="your API key" />
-        </div>
+    <!-- Transactions table -->
+    <div class="card">
+      <h2>Purchases</h2>
+      <div class="space"></div>
+      <table id="tx-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Purchase Rate</th>
+            <th>Quantity (kg)</th>
+            <th>Amount</th>
+            <th>Date</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="tx-body"></tbody>
+      </table>
+      <div class="flex" style="justify-content:flex-end;margin-top:10px;">
+        <div class="pill">Total Purchase: <span id="tx-total" class="muted" style="margin-left:6px">0.00</span></div>
       </div>
-      <div class="controls" style="margin-top:12px">
-        <button class="secondary" id="btnPing">Test connection</button>
-        <span id="connStatus" class="status">Idle</span>
-      </div>
-    </section>
+    </div>
 
-    <!-- Add Transaction -->
-    <section class="card" id="sectionAdd">
-      <h3 style="margin:0 0 12px 0; font-size:16px">Record Transaction</h3>
-      <div class="row">
-        <div class="col-4">
-          <label>Item Name</label>
-          <input id="itemName" placeholder="" />
-        </div>
-        <div class="col-2">
-          <label>Purchase Rate (per kg)</label>
-          <input id="purchaseRate" type="number" step="0.01" min="0" placeholder="8.50" />
-        </div>
-        <div class="col-2">
-          <label>Sale Rate (per kg)</label>
-          <input id="saleRate" type="number" step="0.01" min="0" placeholder="12.00" />
-        </div>
-        <div class="col-2">
-          <label>Quantity (kg)</label>
-          <input id="quantityKg" type="number" step="0.001" min="0" placeholder="50.000" />
-        </div>
-        <div class="col-2">
-          <label>Transaction Date (optional)</label>
-          <input id="txDate" type="date" />
-        </div>
-      </div>
-      <div class="controls" style="margin-top:10px">
-        <button class="primary" id="btnAdd">Add</button>
-        <span class="status" id="addStatus">Waiting…</span>
-      </div>
-    </section>
+    <!-- Daily Purchase Summary -->
+    <div class="card">
+      <h2>📅 Daily Purchase Summary</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Total Qty (kg)</th>
+            <th>Total Purchase Amount</th>
+          </tr>
+        </thead>
+        <tbody id="daily-body"></tbody>
+      </table>
+    </div>
 
-    <!-- Transactions: Filters + Table + Pagination -->
-    <section class="card" id="sectionTransactions">
-      <div class="row">
-        <div class="col-3">
-          <label>Filter: Item</label>
-          <select id="filterItem">
-            <option value="">All items</option>
-          </select>
+    <!-- Sales -->
+    <div class="card">
+      <h2>💰 Sales & Profit (Stored)</h2>
+      <form id="form-sale">
+        <div class="grid g6">
+          <input id="sale-item" placeholder="Item name" required />
+          <input id="sale-rate" type="number" inputmode="numeric" step="1" min="1" placeholder="Sale rate (int)" required />
+          <input id="sale-qty" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="Quantity (kg)" required />
+          <input id="sale-date" type="date" />
+          <button class="btn-ok" type="submit">Add Sale</button>
+          <div class="pill">Avg purchase: <span id="avg-hint" class="muted" style="margin-left:6px">0.00</span></div>
         </div>
-        <div class="col-3">
-          <label>Date From</label>
-          <input id="filterFrom" type="date" />
-        </div>
-        <div class="col-3">
-          <label>Date To</label>
-          <input id="filterTo" type="date" />
-        </div>
-        <div class="col-3">
-          <label>Page Size</label>
-          <select id="pageLimit">
-            <option>10</option>
-            <option selected>20</option>
-            <option>50</option>
-            <option>100</option>
-          </select>
-        </div>
-      </div>
-      <div class="controls" style="justify-content:space-between; align-items:center; margin-top:10px">
-        <div class="right">
-          <button class="secondary" id="btnApply">Apply Filters</button>
-          <button class="secondary" id="btnClear">Clear</button>
-          <button class="secondary" id="btnRefresh">Refresh</button>
-          <button class="secondary" id="btnTxCSV">Download CSV</button>
-        </div>
-        <div class="right">
-          <button class="secondary" id="btnPrev">Prev</button>
-          <span id="pageInfo" class="status">Page 1</span>
-          <button class="secondary" id="btnNext">Next</button>
-        </div>
-      </div>
-      <div class="status" id="listStatus" style="margin:10px 0">No data loaded yet.</div>
-      <div style="overflow:auto">
-        <table id="txTable">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Date</th>
-              <th>Item</th>
-              <th>Purchase</th>
-              <th>Sale</th>
-              <th>Qty (kg)</th>
-              <th>Profit (row)</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-          <tfoot>
-            <tr>
-              <td colspan="5">Totals (this page)</td>
-              <td id="totQty">0</td>
-              <td id="totProfit">0.00</td>
-              <td></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </section>
+      </form>
 
-    <!-- Daily Summary -->
-    <section class="card hidden" id="sectionSummary">
-      <div class="row">
-        <div class="col-4">
-          <label>Item (optional)</label>
-          <select id="sumItem">
-            <option value="">All items</option>
-          </select>
-        </div>
-        <div class="col-4">
-          <label>Date From</label>
-          <input id="sumFrom" type="date" />
-        </div>
-        <div class="col-4">
-          <label>Date To</label>
-          <input id="sumTo" type="date" />
-        </div>
+      <div class="space"></div>
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Avg Purchase Rate</th>
+            <th>Sale Rate</th>
+            <th>Qty (kg)</th>
+            <th>Profit</th>
+            <th>Date</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="sales-body"></tbody>
+      </table>
+      <div class="flex" style="justify-content:flex-end;margin-top:10px;">
+        <div class="pill">Sales Total Profit: <span id="sales-total" class="muted" style="margin-left:6px">0.00</span></div>
       </div>
-      <div class="controls" style="margin-top:10px; justify-content:space-between">
-        <div>
-          <button class="secondary" id="btnLoadSummary">Load Summary</button>
-          <span id="sumStatus" class="status">Waiting…</span>
-        </div>
-        <button class="secondary" id="btnSumCSV">Download CSV</button>
-      </div>
-      <div style="overflow:auto; margin-top:10px">
-        <table id="sumTable">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Total Qty (kg)</th>
-              <th>Total Profit</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-  </main>
+    </div>
+  </div>
 
   <script>
-    // --- Theme toggle (persisted, system default) ---
-    const THEME_KEY = "inventory_theme";
-    function prefersDark(){ return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches; }
-    function applyTheme(theme){
-      if(theme === "dark"){ document.documentElement.setAttribute("data-theme","dark"); }
-      else{ document.documentElement.removeAttribute("data-theme"); }
-      localStorage.setItem(THEME_KEY, theme);
-      const btn = document.getElementById("themeToggle");
-      if(btn) btn.textContent = theme === "dark" ? "🌞" : "🌓";
-    }
-    function initTheme(){
-      const saved = localStorage.getItem(THEME_KEY);
-      const initial = saved || (prefersDark() ? "dark" : "light");
-      applyTheme(initial);
-      const btn = document.getElementById("themeToggle");
-      if(btn){
-        btn.addEventListener("click", () => {
-          const cur = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
-          applyTheme(cur === "dark" ? "light" : "dark");
-        });
-      }
-      if(!saved && window.matchMedia){
-        window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e => applyTheme(e.matches ? "dark" : "light"));
-      }
-    }
-    initTheme();
+    // ---- Config ----
+    const API = 'http://127.0.0.1:8000';
+    const API_KEY = '@uzair143';
+    const today = () => new Date().toISOString().slice(0,10);
 
-    // --- UI helpers ---
-    const $ = (id) => document.getElementById(id);
-    const qs = (sel) => document.querySelector(sel);
+    // ---- Elements ----
+    const connEl = document.getElementById('conn');
 
-    // Tabs
-    const tabTx = $("tabTransactions");
-    const tabSum = $("tabSummary");
-    const sectionTx = $("sectionTransactions");
-    const sectionAdd = $("sectionAdd");
-    const sectionSum = $("sectionSummary");
-    tabTx.addEventListener("click", () => {
-      tabTx.classList.add("active"); tabSum.classList.remove("active");
-      sectionTx.classList.remove("hidden"); sectionAdd.classList.remove("hidden");
-      sectionSum.classList.add("hidden");
-    });
-    tabSum.addEventListener("click", () => {
-      tabSum.classList.add("active"); tabTx.classList.remove("active");
-      sectionSum.classList.remove("hidden");
-      sectionTx.classList.add("hidden"); sectionAdd.classList.add("hidden");
-    });
+    const addItem = document.getElementById('add-item');
+    const addRate = document.getElementById('add-rate');
+    const addQty  = document.getElementById('add-qty');
+    const addDate = document.getElementById('add-date');
+    const addForm = document.getElementById('form-add');
+    const btnReset = document.getElementById('btn-reset');
 
-    // API helpers
-    function apiBase(){ const v = $("apiBase").value.trim(); return v || ""; }
-    function headers(auth=true){ const base = { "Content-Type": "application/json" }; if(!auth) return base; const key = $("apiKey").value.trim(); return key ? { ...base, "X-API-Key": key } : base; }
-    function fmt(n, digits=2){ const x = Number(n); if(Number.isNaN(x)) return "0"; return x.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits }); }
+    const txBody = document.getElementById('tx-body');
+    const txTotal = document.getElementById('tx-total');
 
-    // CSV helpers
-    function toCSV(rows, headers){
-      const esc = (v) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; };
-      const head = headers.map(esc).join(",");
-      const body = rows.map(r => headers.map(h => esc(r[h])).join(",")).join("\n");
-      return head + "\n" + body;
-    }
-    function downloadCSV(filename, csvString){
-      const blob = new Blob([csvString], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    const fItem = document.getElementById('f-item');
+    const fFrom = document.getElementById('f-from');
+    const fTo   = document.getElementById('f-to');
+    const btnRefetch = document.getElementById('btn-refetch');
+
+    const dailyBody = document.getElementById('daily-body');
+
+    const saleItem = document.getElementById('sale-item');
+    const saleRate = document.getElementById('sale-rate');
+    const saleQty  = document.getElementById('sale-qty');
+    const saleDate = document.getElementById('sale-date');
+    const saleForm = document.getElementById('form-sale');
+    const avgHint  = document.getElementById('avg-hint');
+
+    const salesBody = document.getElementById('sales-body');
+    const salesTotal = document.getElementById('sales-total');
+
+    const itemsDatalist = document.getElementById('items-list');
+
+    // ---- State ----
+    let transactions = [];
+    let sales = [];
+    let editingId = null; // transaction id currently being edited
+
+    // ---- Helpers ----
+    function setConn(ok){
+      connEl.textContent = ok ? '🟢 API Connected' : '🔴 API Disconnected';
+      connEl.className = 'status pill ' + (ok ? 'ok' : 'bad');
     }
 
-    // Items (for dropdowns)
-    async function loadItems(){
-      try{
-        const resp = await fetch(apiBase() + "/items");
-        const data = await resp.json();
-        const items = data.items || [];
-        for(const sel of [ $("filterItem"), $("sumItem") ]){
-          const cur = sel.value;
-          sel.innerHTML = `<option value="">All items</option>` + items.map(i => `<option value="${i}">${i}</option>`).join("");
-          if([...sel.options].some(o => o.value === cur)) sel.value = cur;
-        }
-      }catch{}
+    function intOnly(value) {
+      const v = String(value).replace(/\D+/g,'');
+      return v ? String(parseInt(v,10)) : '';
     }
 
-    // Connection test
-    $("btnPing").addEventListener("click", async () => {
-      const s = $("connStatus"); s.textContent = "Testing…"; s.className = "status";
-      try{
-        const resp = await fetch(apiBase() + "/transactions", { headers: headers(false) });
-        if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
-        s.textContent = `OK • ${data.total_records} records`; s.className = "status ok";
-        await loadItems();
-      }catch(e){
-        s.textContent = "Connection failed: " + (e.message || e); s.className = "status err";
-      }
-    });
+    function money(n){ return (Math.round(n*100)/100).toFixed(2); }
 
-    // Add transaction
-    $("btnAdd").addEventListener("click", async () => {
-      const s = $("addStatus"); s.textContent = "Submitting…"; s.className = "status";
-      const item_name = $("itemName").value.trim();
-      const purchase_rate = parseFloat($("purchaseRate").value);
-      const sale_rate = parseFloat($("saleRate").value);
-      const quantity_kg = parseFloat($("quantityKg").value);
-      const transaction_date = $("txDate").value ? $("txDate").value : undefined;
-
-      if(!item_name || !(purchase_rate>0) || !(sale_rate>0) || !(quantity_kg>0)){
-        s.textContent = "Please fill all fields with valid values."; s.className = "status err"; return;
-      }
-      try{
-        const body = { item_name, purchase_rate, sale_rate, quantity_kg };
-        if(transaction_date) body.transaction_date = transaction_date;
-        const resp = await fetch(apiBase() + "/transactions", {
-          method: "POST", headers: headers(true), body: JSON.stringify(body)
-        });
-        const data = await resp.json();
-        if(!resp.ok) throw new Error(data?.detail || resp.statusText);
-        s.textContent = `Saved: ${data.item_name} • ${data.quantity_kg} kg • Profit ${fmt(data.total_profit)}`; s.className = "status ok";
-        $("itemName").value = ""; $("purchaseRate").value = ""; $("saleRate").value = ""; $("quantityKg").value = ""; $("txDate").value = "";
-        await loadTransactions(true); await loadItems();
-      }catch(e){
-        s.textContent = "Error: " + (e.message || e); s.className = "status err";
-      }
-    });
-
-    // Transactions + pagination
-    let loading = false; let offset = 0; let lastTxRows = [];
-    $("btnApply").addEventListener("click", () => { offset = 0; loadTransactions(true); });
-    $("btnClear").addEventListener("click", () => { $("filterItem").value=""; $("filterFrom").value=""; $("filterTo").value=""; offset=0; loadTransactions(true); });
-    $("btnRefresh").addEventListener("click", () => loadTransactions(true));
-    $("btnPrev").addEventListener("click", () => { const lim = parseInt($("pageLimit").value); offset = Math.max(0, offset - lim); loadTransactions(true); });
-    $("btnNext").addEventListener("click", () => { const lim = parseInt($("pageLimit").value); offset += lim; loadTransactions(true); });
-
-    async function loadTransactions(showStatus=false){
-      if(loading) return; loading = true;
-      const listStatus = $("listStatus");
-      if(showStatus){ listStatus.textContent = "Loading…"; listStatus.className = "status"; }
-      try{
-        const params = new URLSearchParams();
-        const item = $("filterItem").value, from = $("filterFrom").value, to = $("filterTo").value;
-        const limit = parseInt($("pageLimit").value);
-        if(item) params.set("item_name", item);
-        if(from) params.set("date_from", from);
-        if(to) params.set("date_to", to);
-        params.set("limit", String(limit)); params.set("offset", String(offset));
-
-        const resp = await fetch(apiBase() + "/transactions?" + params.toString(), { headers: headers(false) });
-        const data = await resp.json();
-        if(!resp.ok) throw new Error(data?.detail || resp.statusText);
-
-        lastTxRows = data.transactions || [];
-        renderTxTable(lastTxRows);
-        const total = data.total_records || 0;
-        const page = Math.floor(offset / limit) + 1;
-        const maxPage = Math.max(1, Math.ceil(total / limit));
-        $("pageInfo").textContent = `Page ${page} of ${maxPage} • ${total} total`;
-        if(offset >= total && total > 0){ offset = Math.max(0, (maxPage - 1) * limit); }
-        if(showStatus){ listStatus.textContent = `Loaded ${lastTxRows.length} record(s).`; listStatus.className = "status ok"; }
-      }catch(e){
-        if(showStatus){ listStatus.textContent = "Load failed: " + (e.message || e); listStatus.className = "status err"; }
-      }finally{ loading = false; }
-    }
-
-    function renderTxTable(rows){
-      const tbody = $("txTable").querySelector("tbody"); tbody.innerHTML = "";
-      let totQty = 0, totProfit = 0;
-      for(const r of rows){
-        const unit = Number(r.sale_rate) - Number(r.purchase_rate);
-        const profit = unit * Number(r.quantity_kg);
-        totQty += Number(r.quantity_kg); totProfit += profit;
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${r.id}</td>
-          <td>${r.transaction_date}</td>
-          <td>${r.item_name}</td>
-          <td>${fmt(r.purchase_rate)}</td>
-          <td>${fmt(r.sale_rate)}</td>
-          <td>${fmt(r.quantity_kg, 3)}</td>
-          <td>${fmt(profit)}</td>
-          <td><button class="danger" data-del="${r.id}">Delete</button></td>
-        `;
-        tbody.appendChild(tr);
-      }
-      $("totQty").textContent = fmt(totQty, 3);
-      $("totProfit").textContent = fmt(totProfit);
-
-      // delete handlers
-      tbody.querySelectorAll("button[data-del]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          const id = btn.getAttribute("data-del");
-          const key = $("apiKey").value.trim();
-          if(!key){ alert("Enter API key to delete."); return; }
-          if(!confirm(`Delete transaction #${id}?`)) return;
-          btn.disabled = true;
-          try{
-            const resp = await fetch(apiBase() + `/transactions/${id}`, { method: "DELETE", headers: headers(true) });
-            const data = await resp.json().catch(()=> ({}));
-            if(!resp.ok) throw new Error(data?.detail || resp.statusText);
-            await loadTransactions(true);
-          }catch(e){ alert("Delete failed: " + (e.message || e)); }
-          finally{ btn.disabled = false; }
-        });
+    function filteredTransactions() {
+      return transactions.filter(t => {
+        const d = new Date(t.transaction_date);
+        const matchItem = !fItem.value || t.item_name.toLowerCase().includes(fItem.value.toLowerCase());
+        const matchFrom = !fFrom.value || d >= new Date(fFrom.value);
+        const matchTo   = !fTo.value   || d <= new Date(fTo.value);
+        return matchItem && matchFrom && matchTo;
       });
     }
 
-    // TX CSV (current page)
-    $("btnTxCSV").addEventListener("click", () => {
-      const rows = (lastTxRows || []).map(r => ({
-        id: r.id,
-        transaction_date: r.transaction_date,
-        item_name: r.item_name,
-        purchase_rate: r.purchase_rate,
-        sale_rate: r.sale_rate,
-        quantity_kg: r.quantity_kg,
-        profit: (Number(r.sale_rate) - Number(r.purchase_rate)) * Number(r.quantity_kg)
-      }));
-      const csv = toCSV(rows, ["id","transaction_date","item_name","purchase_rate","sale_rate","quantity_kg","profit"]);
-      downloadCSV(`transactions_page.csv`, csv);
-    });
-
-    // Summary
-    $("btnLoadSummary").addEventListener("click", loadSummary);
-    let lastSumRows = [];
-    async function loadSummary(){
-      const s = $("sumStatus"); s.textContent = "Loading…"; s.className = "status";
-      try{
-        const params = new URLSearchParams();
-        const item = $("sumItem").value, from = $("sumFrom").value, to = $("sumTo").value;
-        if(item) params.set("item_name", item);
-        if(from) params.set("date_from", from);
-        if(to) params.set("date_to", to);
-        const resp = await fetch(apiBase() + "/summary/daily?" + params.toString(), { headers: headers(false) });
-        const data = await resp.json();
-        if(!resp.ok) throw new Error(data?.detail || resp.statusText);
-        lastSumRows = data.rows || [];
-        const tbody = $("sumTable").querySelector("tbody"); tbody.innerHTML = "";
-        for(const row of lastSumRows){
-          const tr = document.createElement("tr");
-          tr.innerHTML = `<td>${row.transaction_date}</td><td>${fmt(row.total_qty_kg,3)}</td><td>${fmt(row.total_profit)}</td>`;
-          tbody.appendChild(tr);
-        }
-        s.textContent = `Loaded ${lastSumRows.length} day(s).`; s.className = "status ok";
-      }catch(e){ s.textContent = "Load failed: " + (e.message || e); s.className = "status err"; }
+    function avgPurchaseByItem() {
+      const agg = new Map();
+      for (const t of transactions) {
+        if (t.purchase_rate == null) continue;
+        const key = t.item_name.trim().toLowerCase();
+        const cur = agg.get(key) || { qty:0, cost:0 };
+        cur.qty  += Number(t.quantity_kg);
+        cur.cost += Math.trunc(Number(t.purchase_rate)) * Number(t.quantity_kg);
+        agg.set(key, cur);
+      }
+      const out = new Map();
+      for (const [k,v] of agg.entries()){
+        out.set(k, v.qty>0 ? v.cost/v.qty : 0);
+      }
+      return out;
     }
 
-    // Summary CSV
-    $("btnSumCSV").addEventListener("click", () => {
-      const csv = toCSV(lastSumRows || [], ["transaction_date","total_qty_kg","total_profit"]);
-      downloadCSV("daily_summary.csv", csv);
+    function getAvg(item){
+      const m = avgPurchaseByItem();
+      return m.get(item.trim().toLowerCase()) || 0;
+    }
+
+    // ---- Fetchers ----
+    async function loadItems() {
+      try {
+        const r = await fetch(`${API}/items`, { cache:'no-store' });
+        const d = await r.json();
+        itemsDatalist.innerHTML = (d.items || []).map(it => `<option value="${it}"></option>`).join('');
+      } catch {}
+    }
+
+    async function loadTransactions() {
+      try {
+        const r = await fetch(`${API}/transactions`, { cache:'no-store' });
+        const d = await r.json();
+        transactions = d.transactions || [];
+        setConn(true);
+      } catch (e) {
+        setConn(false);
+      }
+      renderTransactions();
+      renderDaily();
+      loadItems();
+      // refresh avg hint if user typed an item
+      if (saleItem.value.trim()) avgHint.textContent = money(getAvg(saleItem.value));
+    }
+
+    async function loadSales() {
+      try {
+        const r = await fetch(`${API}/sales`, { cache:'no-store' });
+        const d = await r.json();
+        sales = d.sales || [];
+      } catch {}
+      renderSales();
+    }
+
+    // ---- Renderers ----
+    function renderTransactions(){
+      const rows = filteredTransactions();
+      let total = 0;
+      txBody.innerHTML = rows.map(t => {
+        const isEditing = editingId === t.id;
+        const amount = Math.trunc(t.purchase_rate || 0) * Number(t.quantity_kg);
+        total += amount;
+
+        return `<tr>
+          <td>${isEditing ? `<input data-k="item" value="${t.item_name}" />` : t.item_name}</td>
+          <td>${isEditing ? `<input data-k="rate" type="number" step="1" min="1" value="${Math.trunc(t.purchase_rate || 0)}" />` : Math.trunc(t.purchase_rate || 0)}</td>
+          <td>${isEditing ? `<input data-k="qty" type="number" step="0.01" min="0.01" value="${Number(t.quantity_kg).toFixed(2)}" />` : Number(t.quantity_kg).toFixed(2)}</td>
+          <td>${money(amount)}</td>
+          <td>${isEditing ? `<input data-k="date" type="date" value="${(t.transaction_date||'').split('T')[0]}" />` : (t.transaction_date||'').split('T')[0]}</td>
+          <td>
+            ${isEditing
+              ? `<button class="btn-ok" data-act="save" data-id="${t.id}">Save</button>
+                 <button class="btn-warn" data-act="cancel">Cancel</button>`
+              : `<button class="btn-warn" data-act="edit" data-id="${t.id}">Edit</button>
+                 <button class="btn-danger" data-act="del" data-id="${t.id}">Delete</button>`
+            }
+          </td>
+        </tr>`;
+      }).join('');
+      txTotal.textContent = money(total);
+    }
+
+    function renderDaily(){
+      const map = {};
+      for (const t of filteredTransactions()){
+        const day = (t.transaction_date||'').split('T')[0];
+        if (!map[day]) map[day] = {qty:0, amt:0};
+        map[day].qty += Number(t.quantity_kg);
+        map[day].amt += Math.trunc(t.purchase_rate || 0) * Number(t.quantity_kg);
+      }
+      const rows = Object.entries(map).sort((a,b)=>a[0]<b[0]?1:-1);
+      dailyBody.innerHTML = rows.map(([d,v])=>`
+        <tr>
+          <td>${d}</td>
+          <td>${v.qty.toFixed(2)}</td>
+          <td>${money(v.amt)}</td>
+        </tr>
+      `).join('') || `<tr><td colspan="3" class="muted">No purchases to summarize.</td></tr>`;
+    }
+
+    function renderSales(){
+      const avgs = avgPurchaseByItem();
+      let total = 0;
+      salesBody.innerHTML = (sales.length ? sales.map(s=>{
+        const avg = avgs.get(s.item_name.trim().toLowerCase()) || 0;
+        const profit = (Number(s.sale_rate) - avg) * Number(s.quantity_kg);
+        total += profit;
+        return `<tr>
+          <td>${s.item_name}</td>
+          <td>${money(avg)}</td>
+          <td>${Math.trunc(Number(s.sale_rate))}</td>
+          <td>${Number(s.quantity_kg).toFixed(2)}</td>
+          <td style="color:${profit>=0?'#2bb673':'#e5484d'};font-weight:700">${money(profit)}</td>
+          <td>${s.sale_date}</td>
+          <td><button class="btn-danger" data-sale-del="${s.id}">Delete</button></td>
+        </tr>`;
+      }).join('') : `<tr><td colspan="7" class="muted">No sales added yet.</td></tr>`);
+      salesTotal.textContent = money(total);
+    }
+
+    // ---- Events ----
+    addDate.value = today();
+    saleDate.value = today();
+
+    addForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const item = addItem.value.trim();
+      const rate = intOnly(addRate.value);
+      const qty  = Number(addQty.value);
+      const date = addDate.value || today();
+      if (!item) return alert('Item required');
+      if (!rate || Number(rate)<=0) return alert('Purchase rate must be a positive integer');
+      if (!Number.isFinite(qty) || qty<=0) return alert('Quantity must be > 0');
+      try{
+        const r = await fetch(`${API}/transactions`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json','X-API-Key':API_KEY},
+          body:JSON.stringify({ item_name:item, purchase_rate:Number(rate), quantity_kg:qty, transaction_date:date })
+        });
+        if(!r.ok){ throw new Error(await r.text()); }
+        addItem.value=''; addRate.value=''; addQty.value=''; addDate.value=today();
+        loadTransactions();
+      }catch(err){ alert('Failed to add transaction: '+err.message); }
     });
 
-    // Boot
-    window.addEventListener("load", async () => {
-      await Promise.all([loadItems(), loadTransactions(false)]);
+    btnReset.addEventListener('click', ()=>{
+      addItem.value=''; addRate.value=''; addQty.value=''; addDate.value=today();
     });
+
+    btnRefetch.addEventListener('click', ()=>{
+      fItem.value=''; fFrom.value=''; fTo.value='';
+      loadTransactions();
+    });
+
+    fItem.addEventListener('input', ()=>{ renderTransactions(); renderDaily(); });
+    fFrom.addEventListener('change', ()=>{ renderTransactions(); renderDaily(); });
+    fTo.addEventListener('change', ()=>{ renderTransactions(); renderDaily(); });
+
+    // Inline table actions (edit/save/cancel/delete)
+    txBody.addEventListener('click', async (e)=>{
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      if (act === 'edit'){
+        editingId = Number(btn.dataset.id);
+        renderTransactions();
+      } else if (act === 'cancel'){
+        editingId = null;
+        renderTransactions();
+      } else if (act === 'save'){
+        const id = Number(btn.dataset.id);
+        const row = btn.closest('tr');
+        const val = k => row.querySelector(`input[data-k="${k}"]`).value;
+        const item = val('item').trim();
+        const rate = intOnly(val('rate'));
+        const qty  = Number(val('qty'));
+        const date = val('date') || today();
+        if (!item) return alert('Item required');
+        if (!rate || Number(rate)<=0) return alert('Purchase rate must be a positive integer');
+        if (!Number.isFinite(qty) || qty<=0) return alert('Quantity must be > 0');
+        try {
+          const r = await fetch(`${API}/transactions/${id}`, {
+            method:'PUT',
+            headers:{'Content-Type':'application/json','X-API-Key':API_KEY},
+            body:JSON.stringify({
+              item_name:item,
+              purchase_rate:Number(rate),
+              quantity_kg:qty,
+              transaction_date:date
+            })
+          });
+          if(!r.ok){ throw new Error(await r.text()); }
+          editingId = null;
+          await loadTransactions();
+        } catch(err){ alert('Update failed: '+err.message); }
+      } else if (act === 'del'){
+        const id = Number(btn.dataset.id);
+        if (!confirm('Delete this transaction?')) return;
+        try {
+          const r = await fetch(`${API}/transactions/${id}`, {
+            method:'DELETE',
+            headers:{'X-API-Key':API_KEY}
+          });
+          if(!r.ok){ throw new Error(await r.text()); }
+          loadTransactions();
+        } catch(err){ alert('Delete failed: '+err.message); }
+      }
+    });
+
+    // Sales
+    saleItem.addEventListener('input', ()=>{
+      avgHint.textContent = money(getAvg(saleItem.value || ''));
+    });
+
+    saleForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const item = saleItem.value.trim();
+      const rate = intOnly(saleRate.value);
+      const qty  = Number(saleQty.value);
+      const date = saleDate.value || today();
+      if (!item) return alert('Enter item name');
+      if (!rate || Number(rate)<=0) return alert('Sale rate must be a positive integer');
+      if (!Number.isFinite(qty) || qty<=0) return alert('Quantity must be > 0');
+      try{
+        const r = await fetch(`${API}/sales`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json','X-API-Key':API_KEY},
+          body:JSON.stringify({ item_name:item, sale_rate:Number(rate), quantity_kg:qty, sale_date:date })
+        });
+        if(!r.ok){ throw new Error(await r.text()); }
+        saleItem.value=''; saleRate.value=''; saleQty.value=''; saleDate.value=today();
+        await loadSales();
+      }catch(err){ alert('Failed to add sale: '+err.message); }
+    });
+
+    salesBody.addEventListener('click', async (e)=>{
+      const btn = e.target.closest('button[data-sale-del]');
+      if (!btn) return;
+      const id = Number(btn.dataset.saleDel);
+      if (!confirm('Delete this sale entry?')) return;
+      try{
+        const r = await fetch(`${API}/sales/${id}`, {
+          method:'DELETE',
+          headers:{'X-API-Key':API_KEY}
+        });
+        if(!r.ok){ throw new Error(await r.text()); }
+        await loadSales();
+      }catch(err){ alert('Delete sale failed: '+err.message); }
+    });
+
+    // ---- init ----
+    (async function init(){
+      addDate.value = today();
+      saleDate.value = today();
+      await loadTransactions();
+      await loadSales();
+    })();
   </script>
 </body>
 </html>

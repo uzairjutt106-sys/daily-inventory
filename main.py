@@ -371,6 +371,61 @@ async def get_all_transactions(
     finally:
         if conn:
             conn.close()
+from datetime import datetime, timedelta
+
+@app.get("/transactions/daily")
+async def transactions_by_day(
+    date_str: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    limit: int = Query(1000, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    api_key: str = Depends(get_api_key),
+):
+    """
+    Returns all transactions for a single calendar date (local DB date),
+    plus simple totals for that day.
+    """
+    # default to today if not provided
+    the_day = date_str or date.today().isoformat()
+
+    conn = sqlite3.connect(DATABASE_FILE)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    try:
+        # If your column stores plain 'YYYY-MM-DD', equality is perfect.
+        # If you ever stored datetimes, you can switch to BETWEEN date() and date()+1 day - 1 sec.
+        cur.execute("""
+            SELECT id, item_name, purchase_rate, sale_rate, quantity_kg, transaction_date
+            FROM transactions
+            WHERE transaction_date = ?
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+        """, (the_day, limit, offset))
+        rows = [dict(r) for r in cur.fetchall()]
+
+        # Totals for that day (helpful for footer UI)
+        cur.execute("""
+            SELECT 
+              ROUND(SUM(quantity_kg), 3)                       AS total_qty,
+              ROUND(SUM(COALESCE(purchase_rate,0)*quantity_kg), 2) AS total_amount
+            FROM transactions
+            WHERE transaction_date = ?
+        """, (the_day,))
+        totals = dict(cur.fetchone() or {"total_qty": 0, "total_amount": 0})
+
+        return {
+            "date": the_day,
+            "rows": rows,
+            "totals": totals,
+            "count": len(rows),
+            "limit": limit,
+            "offset": offset
+        }
+    except sqlite3.Error as e:
+        print("DB error /transactions/daily:", e)
+        raise HTTPException(status_code=500, detail="Database error: could not load daily transactions.")
+    finally:
+        conn.close()
+
 
 # ✅ Update an existing transaction (moved to proper top-level)
 class TransactionUpdate(BaseModel):

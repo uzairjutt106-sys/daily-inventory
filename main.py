@@ -220,11 +220,36 @@ def compute_profit_rows(granularity: str, start_date: str, end_date: str):
         sel_start  = "strftime('%Y-%m-%d', sale_date) AS bucket_start"
         sel_end    = "strftime('%Y-%m-%d', sale_date) AS bucket_end"
     elif granularity == "weekly":
-        # ISO week: use year-week; note: SQLite week is %W (Mon-start, 00-53). Good enough for internal use.
-        sel_bucket = "strftime('%Y', sale_date) || '-W' || printf('%02d', strftime('%W', sale_date)) AS bucket_key"
-        sel_start  = "date(sale_date, '-' || strftime('%w', sale_date) || ' days') AS bucket_start"
-        sel_end    = "date(sale_date, '+' || (6 - strftime('%w', sale_date)) || ' days') AS bucket_end"
-        group_sql  = "strftime('%Y', sale_date) || '-W' || printf('%02d', strftime('%W', sale_date))"
+    # Compute Monday (week_start) and Sunday (week_end) for each sale_date,
+    # group by the week_start, and label as YYYY-Www using week_start.
+        cur.execute("""
+        WITH f AS (
+          SELECT date(sale_date) AS d, profit
+          FROM sales
+          WHERE date(sale_date) BETWEEN date(?) AND date(?)
+        ),
+        w AS (
+          -- Monday of current week: date(d, 'weekday 1', '-7 days')
+          SELECT
+            date(d, 'weekday 1', '-7 days')                             AS week_start,
+            date(date(d, 'weekday 1', '-7 days'), '+6 days')            AS week_end,
+            profit
+          FROM f
+        )
+        SELECT
+          strftime('%Y', week_start) || '-W' ||
+            printf('%02d', strftime('%W', week_start))                  AS bucket_key,
+          week_start                                                    AS bucket_start,
+          week_end                                                      AS bucket_end,
+          ROUND(COALESCE(SUM(profit), 0), 2)                            AS total_profit
+        FROM w
+        GROUP BY bucket_key
+        ORDER BY week_start ASC
+    """, (start_date, end_date))
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+        return rows
+
     elif granularity == "monthly":
         sel_bucket = "strftime('%Y-%m', sale_date) AS bucket_key"
         sel_start  = "date(strftime('%Y-%m-01', sale_date)) AS bucket_start"

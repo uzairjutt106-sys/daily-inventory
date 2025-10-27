@@ -64,6 +64,11 @@ class DeleteResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
+class SaleUpdate(BaseModel):
+    item_name: str = Field(..., example="copper")
+    sale_rate: float = Field(..., gt=0, description="Selling price per kg")
+    quantity_kg: float = Field(..., gt=0, description="Quantity sold in kilograms")
+    sale_date: Optional[date] = Field(None, description="Date of sale (YYYY-MM-DD)")
 
 app = FastAPI(
     title="Daily Inventory API",
@@ -509,6 +514,68 @@ async def create_sale(sale: SaleIn, api_key: str = Depends(get_api_key)):
     finally:
         if conn:
             conn.close()
+@app.put("/sales/{sale_id}")
+async def update_sale(
+    sale_id: int = FPath(..., ge=1),
+    payload: SaleUpdate = ...,
+    api_key: str = Depends(get_api_key),
+):
+    """
+    Update an existing sale and re-compute its profit using current weighted-average purchase.
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        # Ensure the sale exists
+        cur.execute("SELECT id, item_name, sale_date FROM sales WHERE id = ?", (sale_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Sale not found")
+
+        sale_dt = (payload.sale_date or date.fromisoformat(row["sale_date"])).isoformat()
+
+        # Recompute profit using current weighted average purchase for *new* item_name
+        avg_purchase = get_weighted_avg_purchase(payload.item_name)
+        profit = (float(payload.sale_rate) - avg_purchase) * float(payload.quantity_kg)
+
+        # Update
+        cur.execute("""
+            UPDATE sales
+               SET item_name   = ?,
+                   sale_rate   = ?,
+                   quantity_kg = ?,
+                   sale_date   = ?,
+                   profit      = ?
+             WHERE id = ?
+        """, (
+            payload.item_name.strip(),
+            float(payload.sale_rate),
+            float(payload.quantity_kg),
+            sale_dt,
+            float(profit),
+            sale_id,
+        ))
+
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Sale not found")
+
+        conn.commit()
+
+        # Return updated record
+        cur.execute("SELECT id, item_name, sale_rate, quantity_kg, sale_date, profit FROM sales WHERE id = ?", (sale_id,))
+        updated = dict(cur.fetchone())
+        return {"message": "Sale updated", "sale": updated}
+
+    except sqlite3.Error as e:
+        print(f"DB error during sale update: {e}")
+        raise HTTPException(status_code=500, detail="Database error: Could not update sale.")
+    finally:
+        if conn:
+            conn.close()
+
 
 # --------- Profit storage (materialized) ----------
 def ensure_profit_tables():
